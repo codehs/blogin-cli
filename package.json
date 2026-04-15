@@ -1,0 +1,19 @@
+{
+  "name": "blogin-cli",
+  "version": "1.0.0",
+  "main": "index.js",
+  "bin": {
+    "blogin": "./bin/blogin.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "CLI wrapper for the BlogIn REST API",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2"
+  }
+}
