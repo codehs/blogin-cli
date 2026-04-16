@@ -2,9 +2,14 @@
 
 const path = require("path");
 // Load .env from CLI project dir, then from parent dir (.env.local)
-require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+// quiet: true suppresses dotenvx marketing logs
+require("dotenv").config({
+  path: path.resolve(__dirname, "../.env"),
+  quiet: true,
+});
 require("dotenv").config({
   path: path.resolve(__dirname, "../../.env.local"),
+  quiet: true,
 });
 
 const { Command } = require("commander");
@@ -39,7 +44,7 @@ async function run(fn) {
 function paginationOpts(cmd) {
   return cmd
     .option("-p, --page <n>", "Page number (default: 1)")
-    .option("-l, --limit <n>", "Results per page (default: 10, max: 100)")
+    .option("-l, --limit <n>", "Results per page (min: 10, max: 100, default: 10)")
     .option("-s, --sort <field>", "Sort field (prefix with - for descending)");
 }
 
