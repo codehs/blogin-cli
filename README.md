@@ -1,0 +1,178 @@
+# blogin-cli
+
+CLI wrapper for the [BlogIn REST API](https://blogin.co/api/rest/docs/). Designed for easy use by AI agents — all output is JSON, commands are predictable, and help text is thorough.
+
+## Setup
+
+```bash
+npm install
+npm link        # makes `blogin` available globally
+```
+
+Set your API key as an environment variable or in a `.env` file:
+
+```bash
+export BLOGIN_API_KEY=your_api_key_here
+```
+
+The CLI also reads from `../.env.local` (parent directory) automatically.
+
+## Authentication
+
+All requests use Bearer token auth via the `BLOGIN_API_KEY` environment variable. Generate an API key in BlogIn Settings > API tab.
+
+## Usage
+
+```
+blogin <resource> <action> [options]
+```
+
+All commands output JSON to stdout. Errors output JSON to stderr with the API error code.
+
+## Resources & Commands
+
+### Members
+
+```bash
+blogin members list [--page N] [--limit N] [--sort FIELD]
+blogin members get <id>
+blogin members create --email <email> --username <username> [--name <name>] [--surname <surname>] [--access-level <level>] [--job-title <title>] [--phone <phone>]
+blogin members update <id> [--email <email>] [--username <username>] [--name <name>] [--surname <surname>] [--access-level <level>] [--job-title <title>] [--phone <phone>]
+blogin members delete <id>
+blogin members deactivate <id>
+blogin members activate <id>
+blogin members posts <id> [--page N] [--limit N] [--sort FIELD]
+blogin members teams <id>
+blogin members assign-team <memberId> <teamId>
+blogin members remove-team <memberId> <teamId>
+```
+
+### Posts
+
+```bash
+blogin posts list [--page N] [--limit N] [--sort FIELD] [--author <id>]
+blogin posts get <id>
+blogin posts create --title <title> --text <html> --author-id <id> [--published true|false] [--wiki] [--important] [--pinned] [--comments-disabled]
+blogin posts update <id> [--title <title>] [--text <html>] [--author-id <id>] [--published true|false] [--wiki] [--important] [--pinned] [--comments-disabled]
+blogin posts delete <id>
+blogin posts tags <id>
+```
+
+### Comments
+
+```bash
+blogin comments list <postId> [--page N] [--limit N] [--sort FIELD]
+blogin comments create <postId> --text <html> --author-id <id> [--parent <commentId>]
+blogin comments update <postId> <commentId> --text <html> [--author-id <id>]
+blogin comments delete <postId> <commentId>
+```
+
+### Pages
+
+```bash
+blogin pages list [--page N] [--limit N] [--sort FIELD]
+blogin pages get <id>
+blogin pages create --title <title> --author-id <id> [--text <html>] [--published true|false] [--position N]
+blogin pages update <id> [--title <title>] [--text <html>] [--author-id <id>] [--published true|false] [--position N]
+blogin pages delete <id>
+```
+
+### Categories
+
+```bash
+blogin categories list [--page N] [--limit N] [--sort FIELD]
+blogin categories get <id>
+blogin categories create --name <name> [--parent <id>] [--position N] [--locked]
+blogin categories update <id> [--name <name>] [--parent <id>] [--position N] [--locked]
+blogin categories delete <id>
+blogin categories posts <id> [--page N] [--limit N] [--sort FIELD]
+blogin categories followers <id> [--page N] [--limit N] [--sort FIELD]
+```
+
+### Tags
+
+```bash
+blogin tags list [--page N] [--limit N] [--sort FIELD]
+blogin tags get <id>
+```
+
+### Teams
+
+```bash
+blogin teams list [--page N] [--limit N] [--sort FIELD]
+blogin teams get <id>
+blogin teams create --name <name> [--position N] [--locked]
+blogin teams update <id> [--name <name>] [--position N] [--locked]
+blogin teams delete <id>
+```
+
+### Search
+
+```bash
+blogin search <terms> [--page N] [--limit N] [--sort FIELD] [--comments] [--pages]
+```
+
+### Stats
+
+```bash
+blogin stats posts [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] [--page N] [--limit N] [--sort FIELD]
+blogin stats members [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] [--page N] [--limit N] [--sort FIELD]
+```
+
+## Pagination
+
+All list commands support pagination:
+
+- `--page N` — page number (default: 1)
+- `--limit N` — results per page (min: 10, max: 100, default: 10)
+- `--sort FIELD` — sort field, prefix with `-` for descending (e.g., `-date_published`)
+
+Response includes a `meta.pagination` object with `total`, `count`, `per_page`, `current_page`, `total_pages`, and `links`.
+
+## Response Format
+
+All successful responses are JSON objects with a `data` field (array for lists, object for single items) and a `meta` field for pagination info.
+
+```json
+{
+  "data": [...],
+  "meta": {
+    "pagination": {
+      "total": 148,
+      "count": 10,
+      "per_page": 10,
+      "current_page": 1,
+      "total_pages": 15
+    }
+  }
+}
+```
+
+## Error Handling
+
+Errors output JSON to stderr with status code and message:
+
+```json
+{
+  "status": 404,
+  "error": {
+    "message": "Resource not found",
+    "code": 404
+  }
+}
+```
+
+| Code | Meaning |
+|------|---------|
+| 400 | Invalid request |
+| 401 | Invalid API key |
+| 403 | Admin-only resource |
+| 404 | Resource not found |
+| 405 | Invalid HTTP method |
+| 429 | Rate limit (10 req/sec) |
+| 500 | Server error |
+
+## API Reference
+
+Base URL: `https://blogin.co/api/rest/`
+Full docs: https://blogin.co/api/rest/docs/
