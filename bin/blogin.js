@@ -27,9 +27,15 @@ function output(data) {
   console.log(JSON.stringify(data, null, 2));
 }
 
-async function run(fn) {
+async function run(fn, { truncate } = {}) {
   try {
-    const result = await fn();
+    let result = await fn();
+    if (truncate && result && Array.isArray(result.data)) {
+      result.data = result.data.slice(0, truncate);
+      if (result.meta && result.meta.pagination) {
+        result.meta.pagination.count = result.data.length;
+      }
+    }
     output(result);
   } catch (err) {
     if (err.status) {
@@ -46,7 +52,7 @@ function paginationOpts(cmd, { sortHelp } = {}) {
     .option("-p, --page <n>", "Page number, starts at 1 (default: 1)")
     .option(
       "-l, --limit <n>",
-      "Results per page, min 10, max 100 (default: 10)"
+      "Number of results to return, 1-100 (default: 10)"
     );
   const sortDesc = sortHelp
     ? `Sort field. Prefix with - for descending. ${sortHelp}`
@@ -55,12 +61,24 @@ function paginationOpts(cmd, { sortHelp } = {}) {
   return cmd;
 }
 
+const API_MIN_LIMIT = 10;
+
 function collectOpts(opts) {
   const o = {};
   if (opts.page) o.page = opts.page;
-  if (opts.limit) o.limit = opts.limit;
+  if (opts.limit) {
+    const requested = parseInt(opts.limit);
+    o._truncate = requested < API_MIN_LIMIT ? requested : null;
+    o.limit = Math.max(requested, API_MIN_LIMIT);
+  }
   if (opts.sort) o.sort = opts.sort;
   return o;
+}
+
+function runList(fn, query) {
+  const truncate = query._truncate;
+  delete query._truncate;
+  return run(() => fn(), { truncate });
 }
 
 // --- Program setup ---
@@ -88,7 +106,7 @@ paginationOpts(
     .command("list")
     .description("List all members. Returns paginated member objects."),
   { sortHelp: "Fields: @id, name, surname, email, time_registered (default: @id)" }
-).action((opts) => run(() => getClient().listMembers(collectOpts(opts))));
+).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listMembers(q), q); });
 
 members
   .command("get <id>")
@@ -157,9 +175,7 @@ paginationOpts(
     .command("posts <id>")
     .description("List posts authored by a specific member."),
   { sortHelp: "Default: -date_published (newest first)" }
-).action((id, opts) =>
-  run(() => getClient().getMemberPosts(id, collectOpts(opts)))
-);
+).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getMemberPosts(id, q), q); });
 
 members
   .command("teams <id>")
@@ -194,7 +210,7 @@ paginationOpts(
 ).action((opts) => {
   const q = collectOpts(opts);
   if (opts.author) q.author = opts.author;
-  return run(() => getClient().listPosts(q));
+  return runList(() => getClient().listPosts(q), q);
 });
 
 posts
@@ -275,9 +291,7 @@ paginationOpts(
     .command("list <postId>")
     .description("List comments on a post. Returns comment text, author, parent (for threads), and votes."),
   { sortHelp: "Default: @id (oldest first). Use -@id for newest first." }
-).action((postId, opts) =>
-  run(() => getClient().listComments(postId, collectOpts(opts)))
-);
+).action((postId, opts) => { const q = collectOpts(opts); runList(() => getClient().listComments(postId, q), q); });
 
 comments
   .command("create <postId>")
@@ -322,7 +336,7 @@ paginationOpts(
     .command("list")
     .description("List all static pages. Returns title, author, and position."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => run(() => getClient().listPages(collectOpts(opts))));
+).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listPages(q), q); });
 
 pages
   .command("get <id>")
@@ -385,7 +399,7 @@ paginationOpts(
     .command("list")
     .description("List all categories. Returns id, name, parent (0 = top-level), position, locked status."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => run(() => getClient().listCategories(collectOpts(opts))));
+).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listCategories(q), q); });
 
 categories
   .command("get <id>")
@@ -433,17 +447,13 @@ paginationOpts(
     .command("posts <id>")
     .description("List posts in a category. Same fields as 'posts list'."),
   { sortHelp: "Default: -date_published (newest first)" }
-).action((id, opts) =>
-  run(() => getClient().getCategoryPosts(id, collectOpts(opts)))
-);
+).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getCategoryPosts(id, q), q); });
 
 paginationOpts(
   categories
     .command("followers <id>")
     .description("List members who follow a category (receive notifications for new posts).")
-).action((id, opts) =>
-  run(() => getClient().getCategoryFollowers(id, collectOpts(opts)))
-);
+).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getCategoryFollowers(id, q), q); });
 
 // =====================
 // TAGS
@@ -455,7 +465,7 @@ paginationOpts(
     .command("list")
     .description("List all tags. Returns id, name, slug, and count (number of posts using this tag)."),
   { sortHelp: "Default: -count (most used first)" }
-).action((opts) => run(() => getClient().listTags(collectOpts(opts))));
+).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listTags(q), q); });
 
 tags
   .command("get <id>")
@@ -472,7 +482,7 @@ paginationOpts(
     .command("list")
     .description("List all teams. Returns id, name, position, locked, and sso_managed status."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => run(() => getClient().listTeams(collectOpts(opts))));
+).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listTeams(q), q); });
 
 teams
   .command("get <id>")
@@ -526,7 +536,7 @@ paginationOpts(search)
     const q = collectOpts(opts);
     if (opts.comments) q.comments = true;
     if (opts.pages) q.pages = true;
-    return run(() => getClient().search(terms, q));
+    return runList(() => getClient().search(terms, q), q);
   });
 
 // =====================
@@ -550,6 +560,7 @@ paginationOpts(
   const q = collectOpts(opts);
   if (opts.startDate) q.start_date = opts.startDate;
   if (opts.endDate) q.end_date = opts.endDate;
+  delete q._truncate;
   return run(() => getClient().postStats(q));
 });
 
@@ -567,6 +578,7 @@ paginationOpts(
   const q = collectOpts(opts);
   if (opts.startDate) q.start_date = opts.startDate;
   if (opts.endDate) q.end_date = opts.endDate;
+  delete q._truncate;
   return run(() => getClient().memberStats(q));
 });
 
