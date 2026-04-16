@@ -41,11 +41,18 @@ async function run(fn) {
   }
 }
 
-function paginationOpts(cmd) {
-  return cmd
-    .option("-p, --page <n>", "Page number (default: 1)")
-    .option("-l, --limit <n>", "Results per page (min: 10, max: 100, default: 10)")
-    .option("-s, --sort <field>", "Sort field (prefix with - for descending)");
+function paginationOpts(cmd, { sortHelp } = {}) {
+  cmd
+    .option("-p, --page <n>", "Page number, starts at 1 (default: 1)")
+    .option(
+      "-l, --limit <n>",
+      "Results per page, min 10, max 100 (default: 10)"
+    );
+  const sortDesc = sortHelp
+    ? `Sort field. Prefix with - for descending. ${sortHelp}`
+    : "Sort field. Prefix with - for descending (e.g. -date_published, @id)";
+  cmd.option("-s, --sort <field>", sortDesc);
+  return cmd;
 }
 
 function collectOpts(opts) {
@@ -79,7 +86,8 @@ const members = program
 paginationOpts(
   members
     .command("list")
-    .description("List all members. Returns paginated member objects.")
+    .description("List all members. Returns paginated member objects."),
+  { sortHelp: "Fields: @id, name, surname, email, time_registered (default: @id)" }
 ).action((opts) => run(() => getClient().listMembers(collectOpts(opts))));
 
 members
@@ -90,12 +98,12 @@ members
 members
   .command("create")
   .description("Create a new member. Requires --email and --username.")
-  .requiredOption("--email <email>", "Member email (required)")
-  .requiredOption("--username <username>", "Member username (required)")
+  .requiredOption("--email <email>", "Member email address (required)")
+  .requiredOption("--username <username>", "Unique username for the member (required)")
   .option("--name <name>", "First name")
   .option("--surname <surname>", "Last name")
-  .option("--access-level <level>", "Access level")
-  .option("--job-title <title>", "Job title")
+  .option("--access-level <level>", "10 = regular member, 20 = admin")
+  .option("--job-title <title>", "Job title displayed on profile")
   .option("--phone <phone>", "Phone number")
   .action((opts) => {
     const body = { email: opts.email, username: opts.username };
@@ -110,12 +118,12 @@ members
 members
   .command("update <id>")
   .description("Update an existing member by ID.")
-  .option("--email <email>", "Member email")
-  .option("--username <username>", "Member username")
+  .option("--email <email>", "Member email address")
+  .option("--username <username>", "Unique username")
   .option("--name <name>", "First name")
   .option("--surname <surname>", "Last name")
-  .option("--access-level <level>", "Access level")
-  .option("--job-title <title>", "Job title")
+  .option("--access-level <level>", "10 = regular member, 20 = admin")
+  .option("--job-title <title>", "Job title displayed on profile")
   .option("--phone <phone>", "Phone number")
   .action((id, opts) => {
     const body = {};
@@ -131,35 +139,36 @@ members
 
 members
   .command("delete <id>")
-  .description("Delete a member by ID.")
+  .description("Permanently delete a member by ID.")
   .action((id) => run(() => getClient().deleteMember(id)));
 
 members
   .command("deactivate <id>")
-  .description("Deactivate a member by ID.")
+  .description("Deactivate a member (revokes access, preserves data).")
   .action((id) => run(() => getClient().deactivateMember(id)));
 
 members
   .command("activate <id>")
-  .description("Activate a member by ID.")
+  .description("Re-activate a previously deactivated member.")
   .action((id) => run(() => getClient().activateMember(id)));
 
 paginationOpts(
   members
     .command("posts <id>")
-    .description("List posts by a specific member.")
+    .description("List posts authored by a specific member."),
+  { sortHelp: "Default: -date_published (newest first)" }
 ).action((id, opts) =>
   run(() => getClient().getMemberPosts(id, collectOpts(opts)))
 );
 
 members
   .command("teams <id>")
-  .description("List teams a member belongs to.")
+  .description("List teams a member belongs to. Returns team id, name, position.")
   .action((id) => run(() => getClient().getMemberTeams(id)));
 
 members
   .command("assign-team <memberId> <teamId>")
-  .description("Assign a member to a team.")
+  .description("Add a member to a team. Get team IDs from 'blogin teams list'.")
   .action((memberId, teamId) =>
     run(() => getClient().assignMemberTeam(memberId, teamId))
   );
@@ -179,8 +188,9 @@ const posts = program.command("posts").description("Manage blog posts");
 paginationOpts(
   posts
     .command("list")
-    .description("List all posts. Returns paginated post objects.")
-    .option("--author <id>", "Filter by author ID")
+    .description("List all posts. Returns title, author, date, categories, vote/comment counts.")
+    .option("--author <id>", "Filter to posts by this member ID only"),
+  { sortHelp: "Default: -date_published (newest first)" }
 ).action((opts) => {
   const q = collectOpts(opts);
   if (opts.author) q.author = opts.author;
@@ -189,20 +199,20 @@ paginationOpts(
 
 posts
   .command("get <id>")
-  .description("Get a specific post by ID. Returns full post with HTML body.")
+  .description("Get a specific post by ID. Returns full post including HTML body, author, categories, tags, votes, and comment count.")
   .action((id) => run(() => getClient().getPost(id)));
 
 posts
   .command("create")
   .description("Create a new post. Requires --title, --text, --author-id.")
   .requiredOption("--title <title>", "Post title (required)")
-  .requiredOption("--text <html>", "Post body as HTML (required)")
-  .requiredOption("--author-id <id>", "Author member ID (required)")
-  .option("--published <bool>", "Published status (true/false)")
-  .option("--wiki", "Mark as wiki post")
-  .option("--important", "Mark as important")
-  .option("--pinned", "Pin the post")
-  .option("--comments-disabled", "Disable comments")
+  .requiredOption("--text <html>", "Post body as HTML string (required). Wrap in quotes.")
+  .requiredOption("--author-id <id>", "Author member ID (required). Get IDs from 'blogin members list'.")
+  .option("--published <bool>", "true = visible to all, false = draft (default: true)")
+  .option("--wiki", "Mark as wiki post (collaboratively editable by members)")
+  .option("--important", "Mark as important (highlighted in feed, triggers notifications)")
+  .option("--pinned", "Pin to top of the post feed")
+  .option("--comments-disabled", "Prevent members from commenting on this post")
   .action((opts) => {
     const body = {
       title: opts.title,
@@ -222,13 +232,13 @@ posts
   .command("update <id>")
   .description("Update an existing post by ID.")
   .option("--title <title>", "Post title")
-  .option("--text <html>", "Post body as HTML")
+  .option("--text <html>", "Post body as HTML string. Wrap in quotes.")
   .option("--author-id <authorId>", "Author member ID")
-  .option("--published <bool>", "Published status (true/false)")
-  .option("--wiki", "Mark as wiki post")
-  .option("--important", "Mark as important")
-  .option("--pinned", "Pin the post")
-  .option("--comments-disabled", "Disable comments")
+  .option("--published <bool>", "true = visible to all, false = draft")
+  .option("--wiki", "Mark as wiki post (collaboratively editable by members)")
+  .option("--important", "Mark as important (highlighted in feed, triggers notifications)")
+  .option("--pinned", "Pin to top of the post feed")
+  .option("--comments-disabled", "Prevent members from commenting on this post")
   .action((id, opts) => {
     const body = {};
     if (opts.title) body.title = opts.title;
@@ -250,7 +260,7 @@ posts
 
 posts
   .command("tags <id>")
-  .description("Get all tags for a specific post.")
+  .description("Get all tags for a specific post. Returns tag id, name, and slug.")
   .action((id) => run(() => getClient().getPostTags(id)));
 
 // =====================
@@ -263,7 +273,8 @@ const comments = program
 paginationOpts(
   comments
     .command("list <postId>")
-    .description("List comments on a post.")
+    .description("List comments on a post. Returns comment text, author, parent (for threads), and votes."),
+  { sortHelp: "Default: @id (oldest first). Use -@id for newest first." }
 ).action((postId, opts) =>
   run(() => getClient().listComments(postId, collectOpts(opts)))
 );
@@ -271,9 +282,9 @@ paginationOpts(
 comments
   .command("create <postId>")
   .description("Add a comment to a post. Requires --text and --author-id.")
-  .requiredOption("--text <html>", "Comment body as HTML (required)")
-  .requiredOption("--author-id <id>", "Author member ID (required)")
-  .option("--parent <id>", "Parent comment ID (for replies)")
+  .requiredOption("--text <html>", "Comment body as HTML string (required). Wrap in quotes.")
+  .requiredOption("--author-id <id>", "Author member ID (required). Get IDs from 'blogin members list'.")
+  .option("--parent <id>", "Parent comment ID to reply to (creates a threaded reply)")
   .action((postId, opts) => {
     const body = {
       text: opts.text,
@@ -285,8 +296,8 @@ comments
 
 comments
   .command("update <postId> <commentId>")
-  .description("Update a comment.")
-  .requiredOption("--text <html>", "Comment body as HTML (required)")
+  .description("Update comment text. Requires the post ID and comment ID.")
+  .requiredOption("--text <html>", "New comment body as HTML string (required). Wrap in quotes.")
   .option("--author-id <id>", "Author member ID")
   .action((postId, commentId, opts) => {
     const body = { text: opts.text };
@@ -307,22 +318,25 @@ comments
 const pages = program.command("pages").description("Manage static pages");
 
 paginationOpts(
-  pages.command("list").description("List all pages.")
+  pages
+    .command("list")
+    .description("List all static pages. Returns title, author, and position."),
+  { sortHelp: "Default: @position (display order)" }
 ).action((opts) => run(() => getClient().listPages(collectOpts(opts))));
 
 pages
   .command("get <id>")
-  .description("Get a specific page by ID.")
+  .description("Get a specific page by ID. Returns full page including HTML body.")
   .action((id) => run(() => getClient().getPage(id)));
 
 pages
   .command("create")
   .description("Create a new page. Requires --title and --author-id.")
   .requiredOption("--title <title>", "Page title (required)")
-  .requiredOption("--author-id <id>", "Author member ID (required)")
-  .option("--text <html>", "Page body as HTML")
-  .option("--published <bool>", "Published status (true/false)")
-  .option("--position <n>", "Display position")
+  .requiredOption("--author-id <id>", "Author member ID (required). Get IDs from 'blogin members list'.")
+  .option("--text <html>", "Page body as HTML string. Wrap in quotes.")
+  .option("--published <bool>", "true = visible to all, false = draft (default: true)")
+  .option("--position <n>", "Display order among pages (lower = earlier, integer)")
   .action((opts) => {
     const body = {
       title: opts.title,
@@ -339,10 +353,10 @@ pages
   .command("update <id>")
   .description("Update an existing page by ID.")
   .option("--title <title>", "Page title")
-  .option("--text <html>", "Page body as HTML")
+  .option("--text <html>", "Page body as HTML string. Wrap in quotes.")
   .option("--author-id <id>", "Author member ID")
-  .option("--published <bool>", "Published status (true/false)")
-  .option("--position <n>", "Display position")
+  .option("--published <bool>", "true = visible to all, false = draft")
+  .option("--position <n>", "Display order among pages (lower = earlier, integer)")
   .action((id, opts) => {
     const body = {};
     if (opts.title) body.title = opts.title;
@@ -367,7 +381,10 @@ const categories = program
   .description("Manage post categories");
 
 paginationOpts(
-  categories.command("list").description("List all categories.")
+  categories
+    .command("list")
+    .description("List all categories. Returns id, name, parent (0 = top-level), position, locked status."),
+  { sortHelp: "Default: @position (display order)" }
 ).action((opts) => run(() => getClient().listCategories(collectOpts(opts))));
 
 categories
@@ -379,9 +396,9 @@ categories
   .command("create")
   .description("Create a category. Requires --name.")
   .requiredOption("--name <name>", "Category name (required)")
-  .option("--parent <id>", "Parent category ID")
-  .option("--position <n>", "Display position")
-  .option("--locked", "Lock the category")
+  .option("--parent <id>", "Parent category ID for nesting (0 or omit for top-level)")
+  .option("--position <n>", "Display order among categories (lower = earlier, integer)")
+  .option("--locked", "Lock category so only admins can post to it")
   .action((opts) => {
     const body = { name: opts.name };
     if (opts.parent) body.parent = parseInt(opts.parent);
@@ -394,9 +411,9 @@ categories
   .command("update <id>")
   .description("Update a category by ID.")
   .option("--name <name>", "Category name")
-  .option("--parent <parentId>", "Parent category ID")
-  .option("--position <n>", "Display position")
-  .option("--locked", "Lock the category")
+  .option("--parent <parentId>", "Parent category ID for nesting (0 for top-level)")
+  .option("--position <n>", "Display order among categories (lower = earlier, integer)")
+  .option("--locked", "Lock category so only admins can post to it")
   .action((id, opts) => {
     const body = {};
     if (opts.name) body.name = opts.name;
@@ -414,7 +431,8 @@ categories
 paginationOpts(
   categories
     .command("posts <id>")
-    .description("List posts in a category.")
+    .description("List posts in a category. Same fields as 'posts list'."),
+  { sortHelp: "Default: -date_published (newest first)" }
 ).action((id, opts) =>
   run(() => getClient().getCategoryPosts(id, collectOpts(opts)))
 );
@@ -422,7 +440,7 @@ paginationOpts(
 paginationOpts(
   categories
     .command("followers <id>")
-    .description("List followers of a category.")
+    .description("List members who follow a category (receive notifications for new posts).")
 ).action((id, opts) =>
   run(() => getClient().getCategoryFollowers(id, collectOpts(opts)))
 );
@@ -433,12 +451,15 @@ paginationOpts(
 const tags = program.command("tags").description("Browse tags");
 
 paginationOpts(
-  tags.command("list").description("List all tags (sorted by usage count).")
+  tags
+    .command("list")
+    .description("List all tags. Returns id, name, slug, and count (number of posts using this tag)."),
+  { sortHelp: "Default: -count (most used first)" }
 ).action((opts) => run(() => getClient().listTags(collectOpts(opts))));
 
 tags
   .command("get <id>")
-  .description("Get a specific tag by ID.")
+  .description("Get a specific tag by ID. Returns id, name, and slug.")
   .action((id) => run(() => getClient().getTag(id)));
 
 // =====================
@@ -447,20 +468,23 @@ tags
 const teams = program.command("teams").description("Manage teams");
 
 paginationOpts(
-  teams.command("list").description("List all teams.")
+  teams
+    .command("list")
+    .description("List all teams. Returns id, name, position, locked, and sso_managed status."),
+  { sortHelp: "Default: @position (display order)" }
 ).action((opts) => run(() => getClient().listTeams(collectOpts(opts))));
 
 teams
   .command("get <id>")
-  .description("Get a specific team by ID.")
+  .description("Get a specific team by ID. Returns id, name, position, locked, and sso_managed status.")
   .action((id) => run(() => getClient().getTeam(id)));
 
 teams
   .command("create")
   .description("Create a team. Requires --name.")
   .requiredOption("--name <name>", "Team name (required)")
-  .option("--position <n>", "Display position")
-  .option("--locked", "Lock the team")
+  .option("--position <n>", "Display order among teams (lower = earlier, integer)")
+  .option("--locked", "Lock team so only admins can modify membership")
   .action((opts) => {
     const body = { name: opts.name };
     if (opts.position) body.position = parseInt(opts.position);
@@ -472,8 +496,8 @@ teams
   .command("update <id>")
   .description("Update a team by ID.")
   .option("--name <name>", "Team name")
-  .option("--position <n>", "Display position")
-  .option("--locked", "Lock the team")
+  .option("--position <n>", "Display order among teams (lower = earlier, integer)")
+  .option("--locked", "Lock team so only admins can modify membership")
   .action((id, opts) => {
     const body = {};
     if (opts.name) body.name = opts.name;
@@ -493,11 +517,11 @@ teams
 const search = program
   .command("search <terms>")
   .description(
-    "Search posts, comments, and pages. Pass search terms as the argument."
+    "Full-text search across posts. Returns resourceType, id, title, author, date. By default only searches posts; use --comments and --pages to include those."
   );
 paginationOpts(search)
-  .option("--comments", "Include comments in results")
-  .option("--pages", "Include pages in results")
+  .option("--comments", "Also search within post comments")
+  .option("--pages", "Also search within static pages")
   .action((terms, opts) => {
     const q = collectOpts(opts);
     if (opts.comments) q.comments = true;
@@ -515,12 +539,13 @@ const stats = program
 paginationOpts(
   stats
     .command("posts")
-    .description("Get post statistics.")
+    .description("Get post statistics: total posts, posts/week, comments, engaged users, views, and votes. Includes per-post breakdown with view counts.")
     .option(
       "--start-date <date>",
-      "Start date YYYY-MM-DD (default: 30 days ago)"
+      "Start of date range, YYYY-MM-DD (default: 30 days ago)"
     )
-    .option("--end-date <date>", "End date YYYY-MM-DD (default: today)")
+    .option("--end-date <date>", "End of date range, YYYY-MM-DD (default: today)"),
+  { sortHelp: "Default: -date_published. Also: -post_views, -comments, -upVoteNum" }
 ).action((opts) => {
   const q = collectOpts(opts);
   if (opts.startDate) q.start_date = opts.startDate;
@@ -531,12 +556,13 @@ paginationOpts(
 paginationOpts(
   stats
     .command("members")
-    .description("Get member activity statistics.")
+    .description("Get member activity statistics: posts written, comments made, post views, and logins per member.")
     .option(
       "--start-date <date>",
-      "Start date YYYY-MM-DD (default: 30 days ago)"
+      "Start of date range, YYYY-MM-DD (default: 30 days ago)"
     )
-    .option("--end-date <date>", "End date YYYY-MM-DD (default: today)")
+    .option("--end-date <date>", "End of date range, YYYY-MM-DD (default: today)"),
+  { sortHelp: "Default: -posts. Also: -comments, -post_views, -logins" }
 ).action((opts) => {
   const q = collectOpts(opts);
   if (opts.startDate) q.start_date = opts.startDate;
