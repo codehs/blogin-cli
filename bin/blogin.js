@@ -81,6 +81,28 @@ function runList(fn, query) {
   return run(() => fn(), { truncate });
 }
 
+const ENV_PATH = path.resolve(__dirname, "../.env");
+
+function prompt(question) {
+  const readline = require("readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+async function testApiKey(key) {
+  const client = new BlogInClient(key);
+  const result = await client.listMembers({ limit: 10, page: 1 });
+  return result;
+}
+
 // --- Program setup ---
 
 program
@@ -93,6 +115,124 @@ All commands output JSON. Set BLOGIN_API_KEY env var or place it in .env file.
 Resources: members, posts, comments, pages, categories, tags, teams, search, stats`
   )
   .version("1.0.0");
+
+// =====================
+// AUTH
+// =====================
+const auth = program
+  .command("auth")
+  .description("Check auth status or set up your API key");
+
+auth
+  .command("status", { isDefault: true })
+  .description("Check if your API key is configured and valid. Tests the key against the API.")
+  .action(async () => {
+    const key = process.env.BLOGIN_API_KEY;
+    if (!key) {
+      console.error("Not authenticated. No BLOGIN_API_KEY found.");
+      console.error("");
+      console.error("Run 'blogin auth login' to set up your API key.");
+      console.error("You can generate one in BlogIn → Settings → API tab.");
+      process.exit(1);
+    }
+
+    try {
+      const result = await testApiKey(key);
+      const total = result.meta.pagination.total;
+      const source = require("fs").existsSync(ENV_PATH)
+        && require("fs").readFileSync(ENV_PATH, "utf8").includes("BLOGIN_API_KEY")
+        ? ENV_PATH
+        : "environment variable or parent .env.local";
+      console.log(`Authenticated. API key is valid.`);
+      console.log(`Source: ${source}`);
+      console.log(`Organization has ${total} members.`);
+    } catch (err) {
+      console.error("API key found but is invalid or expired.");
+      console.error("");
+      if (err.status === 401) {
+        console.error("The API returned 401 Unauthorized.");
+      } else {
+        console.error(`Error: ${JSON.stringify(err)}`);
+      }
+      console.error("Run 'blogin auth login' to set a new key.");
+      process.exit(1);
+    }
+  });
+
+auth
+  .command("login")
+  .description("Set up your API key. Prompts for the key, validates it, and saves to .env.")
+  .action(async () => {
+    const fs = require("fs");
+
+    console.error("BlogIn API Key Setup");
+    console.error("Generate an API key in BlogIn → Settings → API tab.");
+    console.error("");
+
+    const key = await prompt("Paste your API key: ");
+    if (!key) {
+      console.error("No key provided. Aborting.");
+      process.exit(1);
+    }
+
+    console.error("Testing key...");
+    try {
+      const result = await testApiKey(key);
+      const total = result.meta.pagination.total;
+      console.error(`Key is valid. Organization has ${total} members.`);
+    } catch (err) {
+      if (err.status === 401) {
+        console.error("Invalid API key. The API returned 401 Unauthorized.");
+      } else {
+        console.error(`Key validation failed: ${JSON.stringify(err)}`);
+      }
+      process.exit(1);
+    }
+
+    // Read existing .env or start fresh
+    let envContent = "";
+    if (fs.existsSync(ENV_PATH)) {
+      envContent = fs.readFileSync(ENV_PATH, "utf8");
+    }
+
+    // Replace existing key or append
+    if (envContent.match(/^BLOGIN_API_KEY=.*/m)) {
+      envContent = envContent.replace(
+        /^BLOGIN_API_KEY=.*/m,
+        `BLOGIN_API_KEY=${key}`
+      );
+    } else {
+      if (envContent && !envContent.endsWith("\n")) envContent += "\n";
+      envContent += `BLOGIN_API_KEY=${key}\n`;
+    }
+
+    fs.writeFileSync(ENV_PATH, envContent);
+    console.error("");
+    console.error(`Saved to ${ENV_PATH}`);
+    console.error("You're all set! Try: blogin posts list -l 3");
+  });
+
+auth
+  .command("logout")
+  .description("Remove your saved API key from .env.")
+  .action(() => {
+    const fs = require("fs");
+
+    if (!fs.existsSync(ENV_PATH)) {
+      console.error("No .env file found. Nothing to remove.");
+      process.exit(0);
+    }
+
+    let envContent = fs.readFileSync(ENV_PATH, "utf8");
+    if (!envContent.match(/^BLOGIN_API_KEY=.*/m)) {
+      console.error("No BLOGIN_API_KEY found in .env. Nothing to remove.");
+      process.exit(0);
+    }
+
+    envContent = envContent.replace(/^BLOGIN_API_KEY=.*\n?/m, "");
+    fs.writeFileSync(ENV_PATH, envContent);
+    console.log("API key removed from .env.");
+  });
 
 // =====================
 // MEMBERS
