@@ -176,3 +176,89 @@ Errors output JSON to stderr with status code and message:
 
 Base URL: `https://blogin.co/api/rest/`
 Full docs: https://blogin.co/api/rest/docs/
+
+---
+
+## Instructions for Agents
+
+Copy-paste the section below into a conversation with an AI agent to get it up to speed on using BlogIn through this CLI.
+
+---
+
+### What is BlogIn?
+
+BlogIn (https://blogin.co) is an internal company blog platform. Teams use it to share updates, announcements, recaps, and knowledge with the rest of the organization. Think of it as a structured, searchable internal newsletter — posts are organized by categories (e.g., "Monthly Recap", "Engineering", "Sales") and teams, and people can comment and vote on posts.
+
+Key concepts:
+- **Posts** are the main content. They have an author, HTML body, categories, tags, and can be pinned/important/wiki.
+- **Members** are people in the organization. Each has a role, teams, and activity history.
+- **Categories** organize posts by topic (e.g., "Product", "Customer Success", "Monthly Recap").
+- **Teams** represent departments or groups (e.g., "Engineering", "Marketing").
+- **Tags** are freeform labels on posts.
+- **Pages** are static wiki-style content (like a "Blog Guidelines" page).
+- **Comments** are threaded discussions on posts.
+
+### Setting up the CLI
+
+The `blogin` CLI is installed at the repo `blogin-cli`. To set it up:
+
+```bash
+cd blogin-cli
+npm install
+npm link
+```
+
+It needs a `BLOGIN_API_KEY` environment variable. Check for it in:
+- A `.env` file in the `blogin-cli/` directory
+- A `.env.local` file in the parent directory
+
+Once set up, verify it works by running:
+
+```bash
+blogin members list
+```
+
+You should get back a JSON response with member data.
+
+### How to use the CLI
+
+Every command follows the pattern `blogin <resource> <action> [options]` and returns JSON. Run `blogin --help` to see all resources, or `blogin <resource> --help` to see actions for a resource.
+
+Quick orientation commands to understand the blog:
+
+```bash
+# See what categories exist
+blogin categories list
+
+# See what teams exist
+blogin teams list
+
+# See recent posts
+blogin posts list
+
+# Read a specific post
+blogin posts get <id>
+
+# See comments on a post
+blogin comments list <postId>
+
+# Search for something
+blogin search "quarterly update"
+
+# See who's been active
+blogin stats members --start-date 2026-01-01
+```
+
+All list commands support `--page N`, `--limit N` (min 10, max 100), and `--sort FIELD` (prefix with `-` for descending, e.g., `-date_published`).
+
+Post bodies use HTML for the `--text` field when creating or updating.
+
+### Before you start — ask the user
+
+To use BlogIn effectively on someone's behalf, you should understand their context. Ask the user:
+
+1. **What do you use BlogIn for?** (e.g., writing monthly recaps, reading company updates, tracking team activity, managing members)
+2. **What are you trying to accomplish right now?** (e.g., "draft this month's engineering recap", "summarize what the sales team posted last quarter", "find all posts about a specific topic")
+3. **What is your member ID or username?** (needed if you'll be creating posts or comments on their behalf — you can look it up with `blogin members list`)
+4. **Are there specific categories or teams you care about?** (helps you filter results instead of pulling everything)
+5. **Should posts be published immediately or saved as drafts?** (when creating content, `--published true` makes it live right away)
