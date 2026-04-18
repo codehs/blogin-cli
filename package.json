@@ -10,7 +10,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "description": "CLI wrapper for the BlogIn REST API",
   "dependencies": {
     "commander": "^14.0.3",
