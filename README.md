@@ -1,6 +1,6 @@
 # blogin-cli
 
-CLI wrapper for the [BlogIn REST API](https://blogin.co/api/rest/docs/). Designed for easy use by AI agents — all output is JSON, commands are predictable, and help text is thorough.
+Agent-native CLI wrapper for the [BlogIn REST API](https://blogin.co/api/rest/docs/). All results land on stdout as JSON; errors and follow-up hints land on stderr. Compound flags (e.g. `posts get --with comments,tags,author`) bundle related data into a single response so agents can avoid round-trips.
 
 ## Setup
 
@@ -27,7 +27,19 @@ All requests use Bearer token auth via the `BLOGIN_API_KEY` environment variable
 blogin <resource> <action> [options]
 ```
 
-All commands output JSON to stdout. Errors output JSON to stderr with the API error code.
+All commands output JSON to stdout. Errors output JSON to stderr with the API error code. When stdout is piped (non-interactive), list commands also print follow-up hints to stderr (e.g. how to fetch the next page or available sort fields).
+
+## Shortcuts
+
+Top-level verbs for common patterns:
+
+```bash
+blogin recent [--limit N] [--page N]                  # newest posts
+blogin find <terms...> [author:<id>] [category:<id>]  # mixed free-text + key:value filters
+                       [--comments] [--pages] [--page N] [--limit N] [--sort F]
+```
+
+`find` accepts free text and `key:value` filter tokens in the same call. When only a filter is given (no free text), it routes to the narrowest endpoint (e.g. `category:3` → `categories posts 3`); otherwise it runs a full-text search and applies remaining filters.
 
 ## Resources & Commands
 
@@ -51,7 +63,7 @@ blogin members remove-team <memberId> <teamId>
 
 ```bash
 blogin posts list [--page N] [--limit N] [--sort FIELD] [--author <id>]
-blogin posts get <id>
+blogin posts get <id> [--with comments,tags,author]
 blogin posts create --title <title> --text <html> --author-id <id> [--published true|false] [--wiki] [--important] [--pinned] [--comments-disabled]
 blogin posts update <id> [--title <title>] [--text <html>] [--author-id <id>] [--published true|false] [--wiki] [--important] [--pinned] [--comments-disabled]
 blogin posts delete <id>
@@ -233,17 +245,18 @@ blogin categories list
 # See what teams exist
 blogin teams list
 
-# See recent posts
-blogin posts list
+# See recent posts (shortcut)
+blogin recent
 
-# Read a specific post
-blogin posts get <id>
+# Read a specific post — bundle comments, tags, and full author in one call
+blogin posts get <id> --with comments,tags,author
 
 # See comments on a post
 blogin comments list <postId>
 
-# Search for something
-blogin search "quarterly update"
+# Search with mixed free text + filters
+blogin find "quarterly update" category:3
+blogin find author:42         # all posts by member 42, no search needed
 
 # See who's been active
 blogin stats members --start-date 2026-01-01

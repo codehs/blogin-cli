@@ -27,7 +27,28 @@ function output(data) {
   console.log(JSON.stringify(data, null, 2));
 }
 
-async function run(fn, { truncate } = {}) {
+// Agent-hints on stderr for non-interactive calls (printingpress.dev norm).
+// When stdout is a TTY, the user is reading directly — keep stderr quiet.
+// When piped to an agent, surface follow-up hints they can act on.
+function agentHint(msg) {
+  if (process.stdout.isTTY) return;
+  process.stderr.write(`hint: ${msg}\n`);
+}
+
+function listHints(result, { sortHelp, command } = {}) {
+  if (!result || !result.meta || !result.meta.pagination) return;
+  const p = result.meta.pagination;
+  if (p.total > p.count && p.current_page < p.total_pages) {
+    const nextCmd = command ? `${command} --page ${p.current_page + 1}` : `--page ${p.current_page + 1}`;
+    agentHint(`showing ${p.count} of ${p.total} results — next page: ${nextCmd}`);
+    if (p.per_page < 100) {
+      agentHint(`raise --limit up to 100 to fetch fewer pages`);
+    }
+  }
+  if (sortHelp) agentHint(`sort options: ${sortHelp}`);
+}
+
+async function run(fn, { truncate, sortHelp, command } = {}) {
   try {
     let result = await fn();
     if (truncate && result && Array.isArray(result.data)) {
@@ -37,6 +58,7 @@ async function run(fn, { truncate } = {}) {
       }
     }
     output(result);
+    listHints(result, { sortHelp, command });
   } catch (err) {
     if (err.status) {
       console.error(JSON.stringify(err, null, 2));
@@ -58,6 +80,7 @@ function paginationOpts(cmd, { sortHelp } = {}) {
     ? `Sort field. Prefix with - for descending. ${sortHelp}`
     : "Sort field. Prefix with - for descending (e.g. -date_published, @id)";
   cmd.option("-s, --sort <field>", sortDesc);
+  cmd._sortHelp = sortHelp;
   return cmd;
 }
 
@@ -75,10 +98,22 @@ function collectOpts(opts) {
   return o;
 }
 
-function runList(fn, query) {
+function runList(fn, query, cmd) {
   const truncate = query._truncate;
   delete query._truncate;
-  return run(() => fn(), { truncate });
+  const sortHelp = cmd && cmd._sortHelp;
+  const command = cmd ? cmdPath(cmd) : undefined;
+  return run(() => fn(), { truncate, sortHelp, command });
+}
+
+function cmdPath(cmd) {
+  const parts = [];
+  let c = cmd;
+  while (c && c.name() !== "blogin") {
+    parts.unshift(c.name());
+    c = c.parent;
+  }
+  return `blogin ${parts.join(" ")}`;
 }
 
 const ENV_PATH = path.resolve(__dirname, "../.env");
@@ -108,11 +143,18 @@ async function testApiKey(key) {
 program
   .name("blogin")
   .description(
-    `CLI wrapper for the BlogIn REST API (https://blogin.co/api/rest/docs/)
+    `Agent-native CLI for the BlogIn REST API (https://blogin.co/api/rest/docs/)
 
-All commands output JSON. Set BLOGIN_API_KEY env var or place it in .env file.
+stdout: JSON results only. stderr: errors, plus follow-up hints when piped.
+Set BLOGIN_API_KEY env var or run 'blogin auth login'.
 
-Resources: members, posts, comments, pages, categories, tags, teams, search, stats`
+Shortcuts: recent, find
+Resources: members, posts, comments, pages, categories, tags, teams, search, stats
+
+Compound queries: 'blogin posts get <id> --with comments,tags,author' bundles
+related data into a single response (avoids round-trips).
+Filters: 'blogin find <terms> author:<id> category:<id>' mixes free text and
+key:value filters; the CLI routes to the narrowest endpoint available.`
   )
   .version("1.0.0");
 
@@ -235,6 +277,64 @@ auth
   });
 
 // =====================
+// SHORTCUTS (top-level verbs for common patterns)
+// =====================
+
+program
+  .command("recent")
+  .description("Shortcut: newest posts. Equivalent to 'posts list -s -date_published'.")
+  .option("-l, --limit <n>", "Number of posts to return, 1-100 (default: 10)")
+  .option("-p, --page <n>", "Page number, starts at 1 (default: 1)")
+  .action((opts, cmd) => {
+    const q = collectOpts(opts);
+    q.sort = "-date_published";
+    cmd._sortHelp = "Default: -date_published (newest first)";
+    return runList(() => getClient().listPosts(q), q, cmd);
+  });
+
+const find = program
+  .command("find <terms...>")
+  .description(
+    "Natural-language search. Mix free text with key:value filters: author:<id>, category:<id>. Routes to the narrowest endpoint available."
+  );
+paginationOpts(find, { sortHelp: "Default depends on routed endpoint" })
+  .option("--comments", "Also search within post comments")
+  .option("--pages", "Also search within static pages")
+  .action((terms, opts, cmd) => {
+    const filters = {};
+    const free = [];
+    for (const t of terms) {
+      const m = t.match(/^(author|category):(.+)$/);
+      if (m) filters[m[1]] = m[2];
+      else free.push(t);
+    }
+    const q = collectOpts(opts);
+
+    // Route to the narrowest endpoint when only a filter is given.
+    if (filters.category && free.length === 0) {
+      return runList(
+        () => getClient().getCategoryPosts(filters.category, q),
+        q,
+        cmd
+      );
+    }
+    if (filters.author && free.length === 0) {
+      q.author = filters.author;
+      return runList(() => getClient().listPosts(q), q, cmd);
+    }
+    if (free.length === 0) {
+      console.error(
+        "error: provide search terms or a filter (e.g. find quarterly, find author:42, find category:3)"
+      );
+      process.exit(1);
+    }
+    if (filters.author) q.author = filters.author;
+    if (opts.comments) q.comments = true;
+    if (opts.pages) q.pages = true;
+    return runList(() => getClient().search(free.join(" "), q), q, cmd);
+  });
+
+// =====================
 // MEMBERS
 // =====================
 const members = program
@@ -246,7 +346,7 @@ paginationOpts(
     .command("list")
     .description("List all members. Returns paginated member objects."),
   { sortHelp: "Fields: @id, name, surname, email, time_registered (default: @id)" }
-).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listMembers(q), q); });
+).action((opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listMembers(q), q, cmd); });
 
 members
   .command("get <id>")
@@ -315,7 +415,7 @@ paginationOpts(
     .command("posts <id>")
     .description("List posts authored by a specific member."),
   { sortHelp: "Default: -date_published (newest first)" }
-).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getMemberPosts(id, q), q); });
+).action((id, opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().getMemberPosts(id, q), q, cmd); });
 
 members
   .command("teams <id>")
@@ -347,16 +447,56 @@ paginationOpts(
     .description("List all posts. Returns title, author, date, categories, vote/comment counts.")
     .option("--author <id>", "Filter to posts by this member ID only"),
   { sortHelp: "Default: -date_published (newest first)" }
-).action((opts) => {
+).action((opts, cmd) => {
   const q = collectOpts(opts);
   if (opts.author) q.author = opts.author;
-  return runList(() => getClient().listPosts(q), q);
+  return runList(() => getClient().listPosts(q), q, cmd);
 });
 
 posts
   .command("get <id>")
   .description("Get a specific post by ID. Returns full post including HTML body, author, categories, tags, votes, and comment count.")
-  .action((id) => run(() => getClient().getPost(id)));
+  .option(
+    "--with <resources>",
+    "Comma-separated extras to bundle into one response: comments, tags, author. Avoids extra round-trips."
+  )
+  .action((id, opts) => {
+    const extras = opts.with
+      ? opts.with.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (extras.length === 0) {
+      return run(() => getClient().getPost(id));
+    }
+    return run(async () => {
+      const client = getClient();
+      const post = await client.getPost(id);
+      const tasks = [];
+      if (extras.includes("comments")) {
+        tasks.push(
+          client.listComments(id, { limit: 100, page: 1 }).then((r) => {
+            post.data.comments = r.data;
+            post.data.comments_meta = r.meta;
+          })
+        );
+      }
+      if (extras.includes("tags")) {
+        tasks.push(
+          client.getPostTags(id).then((r) => {
+            post.data.tags = r.data;
+          })
+        );
+      }
+      if (extras.includes("author") && post.data && post.data.author && post.data.author.id) {
+        tasks.push(
+          client.getMember(post.data.author.id).then((r) => {
+            post.data.author = r.data;
+          })
+        );
+      }
+      await Promise.all(tasks);
+      return post;
+    });
+  });
 
 posts
   .command("create")
@@ -431,7 +571,7 @@ paginationOpts(
     .command("list <postId>")
     .description("List comments on a post. Returns comment text, author, parent (for threads), and votes."),
   { sortHelp: "Default: @id (oldest first). Use -@id for newest first." }
-).action((postId, opts) => { const q = collectOpts(opts); runList(() => getClient().listComments(postId, q), q); });
+).action((postId, opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listComments(postId, q), q, cmd); });
 
 comments
   .command("create <postId>")
@@ -476,7 +616,7 @@ paginationOpts(
     .command("list")
     .description("List all static pages. Returns title, author, and position."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listPages(q), q); });
+).action((opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listPages(q), q, cmd); });
 
 pages
   .command("get <id>")
@@ -539,7 +679,7 @@ paginationOpts(
     .command("list")
     .description("List all categories. Returns id, name, parent (0 = top-level), position, locked status."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listCategories(q), q); });
+).action((opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listCategories(q), q, cmd); });
 
 categories
   .command("get <id>")
@@ -587,13 +727,13 @@ paginationOpts(
     .command("posts <id>")
     .description("List posts in a category. Same fields as 'posts list'."),
   { sortHelp: "Default: -date_published (newest first)" }
-).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getCategoryPosts(id, q), q); });
+).action((id, opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().getCategoryPosts(id, q), q, cmd); });
 
 paginationOpts(
   categories
     .command("followers <id>")
     .description("List members who follow a category (receive notifications for new posts).")
-).action((id, opts) => { const q = collectOpts(opts); runList(() => getClient().getCategoryFollowers(id, q), q); });
+).action((id, opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().getCategoryFollowers(id, q), q, cmd); });
 
 // =====================
 // TAGS
@@ -605,7 +745,7 @@ paginationOpts(
     .command("list")
     .description("List all tags. Returns id, name, slug, and count (number of posts using this tag)."),
   { sortHelp: "Default: -count (most used first)" }
-).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listTags(q), q); });
+).action((opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listTags(q), q, cmd); });
 
 tags
   .command("get <id>")
@@ -622,7 +762,7 @@ paginationOpts(
     .command("list")
     .description("List all teams. Returns id, name, position, locked, and sso_managed status."),
   { sortHelp: "Default: @position (display order)" }
-).action((opts) => { const q = collectOpts(opts); runList(() => getClient().listTeams(q), q); });
+).action((opts, cmd) => { const q = collectOpts(opts); runList(() => getClient().listTeams(q), q, cmd); });
 
 teams
   .command("get <id>")
@@ -672,11 +812,11 @@ const search = program
 paginationOpts(search)
   .option("--comments", "Also search within post comments")
   .option("--pages", "Also search within static pages")
-  .action((terms, opts) => {
+  .action((terms, opts, cmd) => {
     const q = collectOpts(opts);
     if (opts.comments) q.comments = true;
     if (opts.pages) q.pages = true;
-    return runList(() => getClient().search(terms, q), q);
+    return runList(() => getClient().search(terms, q), q, cmd);
   });
 
 // =====================
